@@ -55,9 +55,7 @@ jobs:
           git fetch --tags sekai
           echo "ref1nd_main_version=$(git tag -l --sort=v:refname | grep -Po '^v?\K[0-9]+\.[0-9]+\.[0-9]+-reF1nd.*' | tail -n1)" >> $GITHUB_OUTPUT
           echo "ref1nd_main_time=$(git log -1 --format=%cd --date=format:'%Y-%m-%d' $(echo "$ref1nd_main_version" | awk -F '-' '{print $3}'))" >> $GITHUB_OUTPUT
-          
-          # 【满血版 Tag 配置】
-          # 包含 NaiveProxy + PureGo (适配 CGO=0) + AES-CCM/OCB + 基础功能 + 编译修复
+          # 完整功能 Tags
           echo "ref1nd_main_tags=with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0" >> $GITHUB_OUTPUT
 
       - name: Compare `sing-box reF1nd-main` versions with current release
@@ -162,8 +160,7 @@ jobs:
           git fetch --tags sekai
           echo "ref1nd_dev_version=$(git tag -l --sort=v:refname | grep -Po '^v\K.*(alpha|beta|rc).*-reF1nd.*' | tail -n1)" >> $GITHUB_OUTPUT
           echo "ref1nd_dev_time=$(git log -1 --format=%cd --date=format:'%Y-%m-%d' $(echo "$ref1nd_dev_version" | awk -F '-' '{print $3}'))" >> $GITHUB_OUTPUT
-          
-          # 【满血版 Tag 配置 - 适用于 Dev】
+          # 完整功能 Tags
           echo "ref1nd_dev_tags=with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0" >> $GITHUB_OUTPUT
 
       - name: Compare `sing-box reF1nd-dev` versions with current release
@@ -269,8 +266,7 @@ jobs:
           git fetch --tags sekai
           echo "singbox_release_version=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' | sed 's/^v//')" >> $GITHUB_OUTPUT
           echo "singbox_release_time=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.created_at' | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')" >> $GITHUB_OUTPUT
-          
-          # 【满血版 Tag 配置 - 适用于 Release】
+          # 完整功能 Tags
           echo "singbox_release_tags=with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0" >> $GITHUB_OUTPUT
 
       - name: Compare `sing-box Release` versions with current release
@@ -375,8 +371,7 @@ jobs:
           git fetch --tags sekai
           echo "singbox_dev_version=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases | jq -r '.[] | select(.tag_name | test("(alpha|beta|rc)")) | .tag_name' | head -n 1 | sed 's/^v//')" >> $GITHUB_OUTPUT
           echo "singbox_dev_time=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases | jq -r '.[] | select(.tag_name | test("(alpha|beta|rc)")) | .created_at' | head -n 1 | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')" >> $GITHUB_OUTPUT
-          
-          # 【满血版 Tag 配置 - 适用于 Dev】
+          # 完整功能 Tags
           echo "singbox_dev_tags=with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0" >> $GITHUB_OUTPUT
 
       - name: Compare `sing-box Dev` versions with current release
@@ -482,41 +477,6 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           path: ./tmp/
-
-      # ==============================================================================
-      # STEP: Extract actual Build Tags (Now that the build is fixed, this will work)
-      # ==============================================================================
-      - name: Extract Build Tags from Binaries
-        id: extract_tags
-        run: |
-          grab_tags() {
-            local fpath="$1/sing-box"
-            if [ -f "$fpath" ]; then
-              chmod +x "$fpath"
-              # 提取 Tags 文本
-              local tags=$("$fpath" version | grep "Tags:" | sed 's/Tags: //')
-              echo "$tags"
-            else
-              echo ""
-            fi
-          }
-
-          # 1. 获取 Stable / Release 的 Tags
-          TAGS_STABLE=$(grab_tags "./tmp/sing-box-release-linux-amd64-v3")
-          if [ -z "$TAGS_STABLE" ]; then
-            TAGS_STABLE=$(grab_tags "./tmp/sing-box-ref1nd-main-linux-amd64-v3")
-          fi
-          if [ -z "$TAGS_STABLE" ]; then TAGS_STABLE="此版本未更新或提取失败 (Check logs)"; fi
-
-          # 2. 获取 Dev / Alpha 的 Tags
-          TAGS_DEV=$(grab_tags "./tmp/sing-box-dev-linux-amd64-v3")
-          if [ -z "$TAGS_DEV" ]; then
-             TAGS_DEV=$(grab_tags "./tmp/sing-box-ref1nd-dev-linux-amd64-v3")
-          fi
-          if [ -z "$TAGS_DEV" ]; then TAGS_DEV="此版本未更新或提取失败 (Check logs)"; fi
-
-          echo "TAGS_STABLE=$TAGS_STABLE" >> $GITHUB_ENV
-          echo "TAGS_DEV=$TAGS_DEV" >> $GITHUB_ENV
 
       # ----------------------------------------------------------------
       # Packaging: reF1nd-main
@@ -664,10 +624,16 @@ jobs:
             更新 [sing-box Dev 版](https://github.com/SagerNet/sing-box/tree/dev)至 v${{ env.singbox_dev_VERSION }}，发布于 ${{ env.singbox_dev_TIME }}
 
             ### 🛠 编译选项 (Build Tags)
-            **Stable / Release:**
-            `${{ env.TAGS_STABLE }}`
+            **sing-box reF1nd-main 版:**
+            `${{ needs.ref1nd-main.outputs.ref1nd_main_tags }}`
 
-            **Dev / Alpha / Beta:**
-            `${{ env.TAGS_DEV }}`
+            **sing-box reF1nd-dev 版:**
+            `${{ needs.ref1nd-dev.outputs.ref1nd_dev_tags }}`
+
+            **sing-box Release 版:**
+            `${{ needs.singbox-release.outputs.singbox_release_tags }}`
+
+            **sing-box Dev 版:**
+            `${{ needs.singbox-dev.outputs.singbox_dev_tags }}`
           file_glob: true
           file: ./sing-box/*
