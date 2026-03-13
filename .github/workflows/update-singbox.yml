@@ -114,7 +114,7 @@ jobs:
           go-version: ${{ needs.go.outputs.go_version }}
 
       - name: Build `sing-box reF1nd-Stable` core
-        run: go build -v -trimpath -ldflags "-checklinkname=0 -X 'github.com/sagernet/sing-box/constant.Version=${ref1nd_stable_VERSION}' -s -w -buildid=" -tags "${ref1nd_stable_TAGS}" ./cmd/sing-box
+        run: go build -v -trimpath -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${ref1nd_stable_VERSION}' -s -w -buildid=" -tags "${ref1nd_stable_TAGS}" ./cmd/sing-box
 
       - name: Upload files to workspace
         uses: actions/upload-artifact@v7
@@ -148,7 +148,7 @@ jobs:
         run: |
           echo "ref1nd_test_version=$(git tag -l --sort=v:refname | grep -Po '^v\K.*(alpha|beta|rc).*-reF1nd.*' | tail -n1)" >> $GITHUB_OUTPUT
           echo "ref1nd_test_time=$(git log -1 --format=%cd --date=format:'%Y-%m-%d' $(echo "$ref1nd_test_version" | awk -F '-' '{print $3}'))" >> $GITHUB_OUTPUT
-          echo "ref1nd_test_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale,badlinkname,tfogo_checklinkname0" >> $GITHUB_OUTPUT
+          echo "ref1nd_test_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale" >> $GITHUB_OUTPUT
 
       - name: Compare `sing-box reF1nd-Test` versions with current release
         id: compare
@@ -212,13 +212,423 @@ jobs:
           go-version: ${{ needs.go.outputs.go_version }}
 
       - name: Build `sing-box reF1nd-Test` core
-        run: go build -v -trimpath -ldflags "-checklinkname=0 -X 'github.com/sagernet/sing-box/constant.Version=${ref1nd_test_VERSION}' -s -w -buildid=" -tags "${ref1nd_test_TAGS}" ./cmd/sing-box
+        run: go build -v -trimpath -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${ref1nd_test_VERSION}' -s -w -buildid=" -tags "${ref1nd_test_TAGS}" ./cmd/sing-box
 
       - name: Upload files to workspace
         uses: actions/upload-artifact@v6
         with:
           name: sing-box-ref1nd-test-${{ matrix.name }}
           path: sing-box*
+
+  ref1nd_stable_android:
+    runs-on: ubuntu-latest
+    if: ${{ needs.ref1nd_stable_version.outputs.ref1nd_stable_skip_update != 'true' }}
+    needs:
+      - go
+      - ref1nd_stable_version
+    steps:
+      - name: Checkout `reF1nd-stable`
+        uses: actions/checkout@v6
+        with:
+          repository: reF1nd/sing-box
+          ref: reF1nd-stable
+          fetch-depth: 0
+          submodules: 'recursive'
+
+      - name: Setup `Go`
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ needs.go.outputs.go_version }}
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+
+      - name: Setup OpenJDK
+        run: |-
+          sudo apt update && sudo apt install -y openjdk-17-jdk-headless
+          /usr/lib/jvm/java-17-openjdk-amd64/bin/java --version
+
+      - name: Set tag
+        run: git tag v${{ needs.ref1nd_stable_version.outputs.ref1nd_stable_version }} -f
+
+      - name: Build library
+        run: |-
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          make lib_android
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Gradle cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle
+          key: gradle-${{ hashFiles('**/*.gradle') }}
+
+      - name: Update version
+        run: |-
+          go run -v ./cmd/internal/update_android_version --ci --nightly
+
+      - name: Decode Keystore
+        run: |-
+          echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > ./clients/android/app/release.keystore
+          sed -i '/fun getProps(propName: String): String {/,/^}/c\
+          fun getProps(propName: String): String {\
+              System.getenv(propName)?.let { return it }\
+              val propsFile = rootProject.file("local.properties")\
+              if (propsFile.exists()) {\
+                  val props = Properties()\
+                  props.load(FileInputStream(propsFile))\
+                  props.getProperty(propName)?.let { return it }\
+              }\
+              return ""\
+          }' ./clients/android/app/build.gradle.kts
+
+      - name: Streamline "Update" module
+        run: |-
+          sed -i '/UpdateState.loadFromCache()/,/^        }/c\
+                  Settings.checkUpdateEnabled = false\
+                  Settings.updateCheckPrompted = true\
+                  UpdateState.clear()\
+          ' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
+          sed -i '/Handle update check prompt dialog/,/^        }/d' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
+
+          awk '
+          /containerColor = MaterialTheme\.colorScheme\.primary/ {
+              base = NR
+          }
+          {
+              lines[NR] = $0
+          }
+          END {
+              for (i = base; i >= 1; i--) {
+                  if (lines[i] ~ /trailingContent = {/) {
+                      start = i
+                      break
+                  }
+              }
+              for (i = base; i <= NR; i++) {
+                  if (lines[i] ~ /^                    },/) {
+                      end = i
+                      break
+                  }
+              }
+              for (i = 1; i <= NR; i++) {
+                  if (i < start || i > end)
+                      print lines[i]
+              }
+          }
+          ' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt > ./temp-AppSettingsScreen.kt &&\
+          mv -f ./temp-AppSettingsScreen.kt ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
+          awk '
+          /R\.string\.update_settings/ {
+              base = NR
+          }
+          {
+              lines[NR] = $0
+          }
+          END {
+              for (i = base; i >= 1; i--) {
+                  if (lines[i] ~ /Spacer\(modifier = Modifier\.height\(8\.dp\)\)/) {
+                      start = i
+                      break
+                  }
+              }
+              for (i = base; i <= NR; i++) {
+                  if (lines[i] ~ /^}/) {
+                      end = i
+                      break
+                  }
+              }
+              for (i = 1; i <= NR; i++) {
+                  if (i == start) {
+                      print "    }"
+                      print "}"
+                      i = end
+                      continue
+                  }
+                  print lines[i]
+              }
+          }
+          ' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt > ./temp-AppSettingsScreen.kt &&\
+          mv -f ./temp-AppSettingsScreen.kt ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
+
+          sed -i 's/import io.nekohasekai.sfa.update.UpdateState//; s/val hasUpdate by UpdateState.hasUpdate//' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/SettingsScreen.kt
+          awk '
+          /if \(hasUpdate\)/ {
+              base = NR
+          }
+          {
+              lines[NR] = $0
+          }
+          END {
+              for (i = base; i >= 1; i--) {
+                  if (lines[i] ~ /trailingContent = {/) {
+                      start = i
+                      break
+                  }
+              }
+              for (i = base; i <= NR; i++) {
+                  if (lines[i] ~ /^                    },/) {
+                      end = i
+                      break
+                  }
+              }
+              for (i = 1; i <= NR; i++) {
+                  if (i < start || i > end)
+                      print lines[i]
+              }
+          }
+          ' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/SettingsScreen.kt > ./temp-SettingsScreen.kt &&\
+          mv -f ./temp-SettingsScreen.kt ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/SettingsScreen.kt
+
+      - name: Build `SFA-reF1nd-Stable` apk
+        run: |-
+          mkdir -p ./clients/android/app/libs/
+          cp -f  ./*.aar ./clients/android/app/libs/
+          cd ./clients/android
+          ./gradlew :app:assembleOtherRelease
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          ALIAS_NAME: ${{ secrets.ALIAS_NAME }}
+          ALIAS_PASS: ${{ secrets.ALIAS_PASS }}
+          LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
+
+      - name: Prepare upload
+        run: |-
+          mkdir -p ./sfa-ref1nd-stable/
+          for file in ./clients/android/app/build/outputs/apk/other/release/*.apk; do
+            mv -f "${file}" "./sfa-ref1nd-stable/$(basename "${file/SFA-*-reF1nd/SFA-ref1nd-stable}")"
+          done
+
+      - name: Upload files to workspace
+        uses: actions/upload-artifact@v7
+        with:
+          name: sfa-ref1nd-stable-apks
+          path: ./sfa-ref1nd-stable/*
+
+  ref1nd_test_android:
+    runs-on: ubuntu-latest
+    if: ${{ needs.ref1nd_test_version.outputs.ref1nd_test_skip_update != 'true' }}
+    needs:
+      - go
+      - ref1nd_test_version
+    steps:
+      - name: Checkout `reF1nd-testing`
+        uses: actions/checkout@v6
+        with:
+          repository: reF1nd/sing-box
+          ref: reF1nd-testing
+          fetch-depth: 0
+          submodules: 'recursive'
+
+      - name: Setup `Go`
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ needs.go.outputs.go_version }}
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+
+      - name: Setup OpenJDK
+        run: |-
+          sudo apt update && sudo apt install -y openjdk-17-jdk-headless
+          /usr/lib/jvm/java-17-openjdk-amd64/bin/java --version
+
+      - name: Set tag
+        run: git tag v${{ needs.ref1nd_test_version.outputs.ref1nd_test_version }} -f
+
+      - name: Build library
+        run: |-
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          make lib_android
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Gradle cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle
+          key: gradle-${{ hashFiles('**/*.gradle') }}
+
+      - name: Update version
+        run: |-
+          go run -v ./cmd/internal/update_android_version --ci --nightly
+
+      - name: Decode Keystore
+        run: |-
+          echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > ./clients/android/app/release.keystore
+
+          sed -i '/fun getProps(propName: String): String {/,/^}/c\
+          fun getProps(propName: String): String {\
+              System.getenv(propName)?.let { return it }\
+              val propsFile = rootProject.file("local.properties")\
+              if (propsFile.exists()) {\
+                  val props = Properties()\
+                  props.load(FileInputStream(propsFile))\
+                  props.getProperty(propName)?.let { return it }\
+              }\
+              return ""\
+          }' ./clients/android/app/build.gradle.kts
+
+      - name: Fix `reF1nd-testing` error with running
+        run: |-
+          proxy="./clients/android/app/src/main/java/io/nekohasekai/sfa/bg/ProxyService.kt"
+          vpn="./clients/android/app/src/main/java/io/nekohasekai/sfa/bg/VPNService.kt"
+          sed -i '/import io.nekohasekai.libbox.Notification/a import io.nekohasekai.libbox.NeighborUpdateListener' ${proxy}
+          sed -i '/import io.nekohasekai.libbox.Notification/a import io.nekohasekai.libbox.NeighborUpdateListener' ${vpn}
+          sed -i '$i \
+          \
+              override fun registerMyInterface(name: String) {}\
+          \
+              override fun startNeighborMonitor(listener: NeighborUpdateListener) {}\
+          \
+              override fun closeNeighborMonitor(listener: NeighborUpdateListener) {}\
+          ' ${proxy}
+          sed -i '$i \
+          \
+              override fun registerMyInterface(name: String) {}\
+          \
+              override fun startNeighborMonitor(listener: NeighborUpdateListener) {}\
+          \
+              override fun closeNeighborMonitor(listener: NeighborUpdateListener) {}\
+          ' ${vpn}
+
+      - name: Streamline "Update" module
+        run: |-
+          sed -i '/UpdateState.loadFromCache()/,/^        }/c\
+                  Settings.checkUpdateEnabled = false\
+                  Settings.updateCheckPrompted = true\
+                  UpdateState.clear()\
+          ' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
+          sed -i '/Handle update check prompt dialog/,/^        }/d' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/MainActivity.kt
+
+          awk '
+          /containerColor = MaterialTheme\.colorScheme\.primary/ {
+              base = NR
+          }
+          {
+              lines[NR] = $0
+          }
+          END {
+              for (i = base; i >= 1; i--) {
+                  if (lines[i] ~ /trailingContent = {/) {
+                      start = i
+                      break
+                  }
+              }
+              for (i = base; i <= NR; i++) {
+                  if (lines[i] ~ /^                    },/) {
+                      end = i
+                      break
+                  }
+              }
+              for (i = 1; i <= NR; i++) {
+                  if (i < start || i > end)
+                      print lines[i]
+              }
+          }
+          ' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt > ./temp-AppSettingsScreen.kt &&\
+          mv -f ./temp-AppSettingsScreen.kt ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
+          awk '
+          /R\.string\.update_settings/ {
+              base = NR
+          }
+          {
+              lines[NR] = $0
+          }
+          END {
+              for (i = base; i >= 1; i--) {
+                  if (lines[i] ~ /Spacer\(modifier = Modifier\.height\(8\.dp\)\)/) {
+                      start = i
+                      break
+                  }
+              }
+              for (i = base; i <= NR; i++) {
+                  if (lines[i] ~ /^}/) {
+                      end = i
+                      break
+                  }
+              }
+              for (i = 1; i <= NR; i++) {
+                  if (i == start) {
+                      print "    }"
+                      print "}"
+                      i = end
+                      continue
+                  }
+                  print lines[i]
+              }
+          }
+          ' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt > ./temp-AppSettingsScreen.kt &&\
+          mv -f ./temp-AppSettingsScreen.kt ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/AppSettingsScreen.kt
+
+          sed -i 's/import io.nekohasekai.sfa.update.UpdateState//; s/val hasUpdate by UpdateState.hasUpdate//' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/SettingsScreen.kt
+          awk '
+          /if \(hasUpdate\)/ {
+              base = NR
+          }
+          {
+              lines[NR] = $0
+          }
+          END {
+              for (i = base; i >= 1; i--) {
+                  if (lines[i] ~ /trailingContent = {/) {
+                      start = i
+                      break
+                  }
+              }
+              for (i = base; i <= NR; i++) {
+                  if (lines[i] ~ /^                    },/) {
+                      end = i
+                      break
+                  }
+              }
+              for (i = 1; i <= NR; i++) {
+                  if (i < start || i > end)
+                      print lines[i]
+              }
+          }
+          ' ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/SettingsScreen.kt > ./temp-SettingsScreen.kt &&\
+          mv -f ./temp-SettingsScreen.kt ./clients/android/app/src/main/java/io/nekohasekai/sfa/compose/screen/settings/SettingsScreen.kt
+
+      - name: Build `SFA-reF1nd-Test` apk
+        run: |-
+          mkdir -p ./clients/android/app/libs/
+          cp -f  ./*.aar ./clients/android/app/libs/
+          cd ./clients/android
+          ./gradlew :app:assembleOtherRelease
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          ALIAS_NAME: ${{ secrets.ALIAS_NAME }}
+          ALIAS_PASS: ${{ secrets.ALIAS_PASS }}
+          LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
+
+      - name: Prepare upload
+        run: |-
+          mkdir -p ./sfa-ref1nd-test/
+          for file in ./clients/android/app/build/outputs/apk/other/release/*.apk; do
+            mv -f "${file}" "./sfa-ref1nd-test/$(basename "${file/SFA-*-reF1nd/SFA-ref1nd-test}")"
+          done
+
+      - name: Upload files to workspace
+        uses: actions/upload-artifact@v7
+        with:
+          name: sfa-ref1nd-test-apks
+          path: ./sfa-ref1nd-test/*
 
   singbox_stable_version:
     runs-on: ubuntu-latest
@@ -310,7 +720,7 @@ jobs:
           go-version: ${{ needs.go.outputs.go_version }}
 
       - name: Build `sing-box Stable` core
-        run: go build -v -trimpath -ldflags "-checklinkname=0 -X 'github.com/sagernet/sing-box/constant.Version=${singbox_stable_VERSION}' -s -w -buildid=" -tags "${singbox_stable_TAGS}" ./cmd/sing-box
+        run: go build -v -trimpath -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${singbox_stable_VERSION}' -s -w -buildid=" -tags "${singbox_stable_TAGS}" ./cmd/sing-box
 
       - name: Upload files to workspace
         uses: actions/upload-artifact@v6
@@ -344,7 +754,7 @@ jobs:
         run: |
           echo "singbox_test_version=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases | jq -r '.[] | select(.tag_name | test("(alpha|beta|rc)")) | .tag_name' | head -n 1 | sed 's/^v//')" >> $GITHUB_OUTPUT
           echo "singbox_test_time=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases | jq -r '.[] | select(.tag_name | test("(alpha|beta|rc)")) | .created_at' | head -n 1 | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')" >> $GITHUB_OUTPUT
-          echo "singbox_test_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale,badlinkname,tfogo_checklinkname0" >> $GITHUB_OUTPUT
+          echo "singbox_test_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale" >> $GITHUB_OUTPUT
 
       - name: Compare `sing-box Test` versions with current release
         id: compare
@@ -408,7 +818,7 @@ jobs:
           go-version: ${{ needs.go.outputs.go_version }}
 
       - name: Build `sing-box Test` core
-        run: go build -v -trimpath -ldflags "-checklinkname=0 -X 'github.com/sagernet/sing-box/constant.Version=${singbox_test_VERSION}' -s -w -buildid=" -tags "${singbox_test_TAGS}" ./cmd/sing-box
+        run: go build -v -trimpath -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${singbox_test_VERSION}' -s -w -buildid=" -tags "${singbox_test_TAGS}" ./cmd/sing-box
 
       - name: Upload files to workspace
         uses: actions/upload-artifact@v6
@@ -422,8 +832,10 @@ jobs:
     needs:
       - ref1nd_stable_version
       - ref1nd_stable_cross
+      - ref1nd_stable_android
       - ref1nd_test_version
       - ref1nd_test_cross
+      - ref1nd_test_android
       - singbox_stable_version
       - singbox_stable_cross
       - singbox_test_version
@@ -467,6 +879,9 @@ jobs:
             mv -f "./tmp/sing-box-ref1nd-stable-windows-${windows_archs[j]}/sing-box.exe" "./sing-box/sing-box-ref1nd-stable-windows-${windows_archs[j]}.exe"
           done
 
+          # Android
+          mv -f ./tmp/sfa-ref1nd-stable-apks/*.apk ./sing-box/
+
       - name: Download `sing-box reF1nd-Test` files
         if: ${{ env.ref1nd_test_Skip_update != 'true' }}
         run: |
@@ -483,6 +898,9 @@ jobs:
           for j in "${!windows_archs[@]}"; do
             mv -f "./tmp/sing-box-ref1nd-test-windows-${windows_archs[j]}/sing-box.exe" "./sing-box/sing-box-ref1nd-test-windows-${windows_archs[j]}.exe"
           done
+
+          # Android
+          mv -f ./tmp/sfa-ref1nd-test-apks/*.apk ./sing-box/
 
       - name: Download `sing-box Stable` files
         if: ${{ env.singbox_stable_Skip_update != 'true' }}
