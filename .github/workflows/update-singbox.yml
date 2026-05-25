@@ -17,16 +17,6 @@ permissions:
   contents: write
 
 jobs:
-  go:
-    runs-on: ubuntu-latest
-    outputs:
-      go_version: ${{ steps.go.outputs.version }}
-    steps:
-      - name: Get `Go` latest version
-        id: go
-        run: |
-          echo "version=$(curl -sSL https://raw.githubusercontent.com/actions/go-versions/update-versions-manifest-file/versions-manifest.json | jq -r '.[0].version')" >> ${GITHUB_OUTPUT}
-
   ref1nd_stable_version:
     runs-on: ubuntu-latest
     outputs:
@@ -82,7 +72,6 @@ jobs:
 
       fail-fast: false
     needs:
-      - go
       - ref1nd_stable_version
     env:
       GOOS: ${{ matrix.goos }}
@@ -104,7 +93,7 @@ jobs:
       - name: Setup `Go`
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ needs.go.outputs.go_version }}
+          go-version: ~1.25.10
 
       - name: Build `sing-box reF1nd-Stable` core (Linux)
         if: ${{ matrix.goos == 'linux' }}
@@ -175,7 +164,6 @@ jobs:
 
       fail-fast: false
     needs:
-      - go
       - ref1nd_testing_version
     env:
       GOOS: ${{ matrix.goos }}
@@ -197,7 +185,7 @@ jobs:
       - name: Setup `Go`
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ needs.go.outputs.go_version }}
+          go-version: ~1.25.10
 
       - name: Build `sing-box reF1nd-Testing` core (Linux)
         if: ${{ matrix.goos == 'linux' }}
@@ -268,7 +256,6 @@ jobs:
 
       fail-fast: false
     needs:
-      - go
       - singbox_stable_version
     env:
       GOOS: ${{ matrix.goos }}
@@ -290,7 +277,7 @@ jobs:
       - name: Setup `Go`
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ needs.go.outputs.go_version }}
+          go-version: ~1.25.10
 
       - name: Build `sing-box Stable` core (Linux)
         if: ${{ matrix.goos == 'linux' }}
@@ -361,7 +348,6 @@ jobs:
 
       fail-fast: false
     needs:
-      - go
       - singbox_testing_version
     env:
       GOOS: ${{ matrix.goos }}
@@ -383,7 +369,7 @@ jobs:
       - name: Setup `Go`
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ needs.go.outputs.go_version }}
+          go-version: ~1.25.10
 
       - name: Build `sing-box Testing` core (Linux)
         if: ${{ matrix.goos == 'linux' }}
@@ -429,6 +415,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download files from workspace
+        if: ${{ env.ref1nd_stable_SKIP_UPDATE != 'true' || env.ref1nd_testing_SKIP_UPDATE != 'true' || env.singbox_stable_SKIP_UPDATE != 'true' || env.singbox_testing_SKIP_UPDATE != 'true' }}
         uses: actions/download-artifact@v8
         with:
           path: ./tmp/
