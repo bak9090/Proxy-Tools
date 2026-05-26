@@ -17,6 +17,16 @@ permissions:
   contents: write
 
 jobs:
+  go:
+    runs-on: ubuntu-latest
+    outputs:
+      go_version: ${{ steps.go.outputs.version }}
+    steps:
+      - name: Get `Go` latest version
+        id: go
+        run: |
+          echo "version=$(curl -sSL https://raw.githubusercontent.com/actions/go-versions/update-versions-manifest-file/versions-manifest.json | jq -r '.[0].version')" >> ${GITHUB_OUTPUT}
+
   ref1nd_stable_version:
     runs-on: ubuntu-latest
     outputs:
@@ -29,8 +39,18 @@ jobs:
       - name: Get `sing-box reF1nd-Stable` version
         id: version
         run: |
-          echo "ref1nd_stable_version=$(curl -sSL https://api.github.com/repos/reF1nd/sing-box-releases/releases/latest | jq -r '.tag_name' | sed 's/^v//')" >> ${GITHUB_OUTPUT}
-          echo "ref1nd_stable_time=$(curl -sSL https://api.github.com/repos/reF1nd/sing-box-releases/releases/latest | jq -r '.published_at // .created_at' | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')" >> ${GITHUB_OUTPUT}
+          while true; do
+            ref1nd_stable_version=$(curl -sSL https://api.github.com/repos/reF1nd/sing-box-releases/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+            ref1nd_stable_time=$(curl -sSL https://api.github.com/repos/reF1nd/sing-box-releases/releases/latest | jq -r '.published_at // .created_at' | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')
+            if [[ -n "${ref1nd_stable_version}" && "${ref1nd_stable_version}" != "null" ]]; then
+              echo "ref1nd_stable_version=${ref1nd_stable_version}" >> ${GITHUB_OUTPUT}
+              echo "ref1nd_stable_time=${ref1nd_stable_time}" >> ${GITHUB_OUTPUT}
+              break
+            fi
+            echo "未获取到 reF1nd-Stable 版本号，将在 10 秒后重试..."
+            sleep 10
+          done
+
           echo "ref1nd_stable_linux_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale" >> ${GITHUB_OUTPUT}
           echo "ref1nd_stable_windows_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale" >> ${GITHUB_OUTPUT}
 
@@ -72,6 +92,7 @@ jobs:
 
       fail-fast: false
     needs:
+      - go
       - ref1nd_stable_version
     env:
       GOOS: ${{ matrix.goos }}
@@ -93,7 +114,7 @@ jobs:
       - name: Setup `Go`
         uses: actions/setup-go@v6
         with:
-          go-version: ~1.25.10
+          go-version: ${{ needs.go.outputs.go_version }}
 
       - name: Build `sing-box reF1nd-Stable` core (Linux)
         if: ${{ matrix.goos == 'linux' }}
@@ -121,8 +142,18 @@ jobs:
       - name: Get `sing-box reF1nd-Test` version
         id: version
         run: |
-          echo "ref1nd_testing_version=$(curl -sSL https://api.github.com/repos/reF1nd/sing-box-releases/releases | jq -r '.[] | select(.tag_name | test("alpha|beta|rc")) | .tag_name' | head -n 1 | sed 's/^v//')" >> ${GITHUB_OUTPUT}
-          echo "ref1nd_testing_time=$(curl -sSL https://api.github.com/repos/reF1nd/sing-box-releases/releases | jq -r '.[] | select(.tag_name | test("alpha|beta|rc")) | (.published_at // .created_at)' | head -n 1 | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')" >> ${GITHUB_OUTPUT}
+          while true; do
+            ref1nd_testing_version=$(curl -sSL https://api.github.com/repos/reF1nd/sing-box-releases/releases | jq -r '.[] | select(.tag_name | test("alpha|beta|rc")) | .tag_name' | head -n 1 | sed 's/^v//')
+            ref1nd_testing_time=$(curl -sSL https://api.github.com/repos/reF1nd/sing-box-releases/releases | jq -r '.[] | select(.tag_name | test("alpha|beta|rc")) | (.published_at // .created_at)' | head -n 1 | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')
+            if [[ -n "${ref1nd_testing_version}" && "${ref1nd_testing_version}" != "null" ]]; then
+              echo "ref1nd_testing_version=${ref1nd_testing_version}" >> ${GITHUB_OUTPUT}
+              echo "ref1nd_testing_time=${ref1nd_testing_time}" >> ${GITHUB_OUTPUT}
+              break
+            fi
+            echo "未获取到 reF1nd-Testing 版本号，将在 10 秒后重试..."
+            sleep 10
+          done
+
           echo "ref1nd_testing_linux_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale" >> ${GITHUB_OUTPUT}
           echo "ref1nd_testing_windows_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale" >> ${GITHUB_OUTPUT}
 
@@ -165,6 +196,7 @@ jobs:
       fail-fast: false
     needs:
       - ref1nd_testing_version
+      - go
     env:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
@@ -185,7 +217,7 @@ jobs:
       - name: Setup `Go`
         uses: actions/setup-go@v6
         with:
-          go-version: ~1.25.10
+          go-version: ${{ needs.go.outputs.go_version }}
 
       - name: Build `sing-box reF1nd-Testing` core (Linux)
         if: ${{ matrix.goos == 'linux' }}
@@ -213,8 +245,18 @@ jobs:
       - name: Get `sing-box Stable` version
         id: version
         run: |
-          echo "singbox_stable_version=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' | sed 's/^v//')" >> ${GITHUB_OUTPUT}
-          echo "singbox_stable_time=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.published_at // .created_at' | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')" >> ${GITHUB_OUTPUT}
+          while true; do
+            singbox_stable_version=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+            singbox_stable_time=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.published_at // .created_at' | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')
+            if [[ -n "${singbox_stable_version}" && "${singbox_stable_version}" != "null" ]]; then
+              echo "singbox_stable_version=${singbox_stable_version}" >> ${GITHUB_OUTPUT}
+              echo "singbox_stable_time=${singbox_stable_time}" >> ${GITHUB_OUTPUT}
+              break
+            fi
+            echo "未获取到 sing-box Stable 版本号，将在 10 秒后重试..."
+            sleep 10
+          done
+
           echo "singbox_stable_linux_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale" >> ${GITHUB_OUTPUT}
           echo "singbox_stable_windows_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale" >> ${GITHUB_OUTPUT}
 
@@ -256,6 +298,7 @@ jobs:
 
       fail-fast: false
     needs:
+      - go
       - singbox_stable_version
     env:
       GOOS: ${{ matrix.goos }}
@@ -277,7 +320,7 @@ jobs:
       - name: Setup `Go`
         uses: actions/setup-go@v6
         with:
-          go-version: ~1.25.10
+          go-version: ${{ needs.go.outputs.go_version }}
 
       - name: Build `sing-box Stable` core (Linux)
         if: ${{ matrix.goos == 'linux' }}
@@ -305,8 +348,18 @@ jobs:
       - name: Get `sing-box Testing` version
         id: version
         run: |
-          echo "singbox_testing_version=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases | jq -r '.[] | select(.tag_name | test("alpha|beta|rc")) | .tag_name' | head -n 1 | sed 's/^v//')" >> ${GITHUB_OUTPUT}
-          echo "singbox_testing_time=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases | jq -r '.[] | select(.tag_name | test("alpha|beta|rc")) | (.published_at // .created_at)' | head -n 1 | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')" >> ${GITHUB_OUTPUT}
+          while true; do
+            singbox_testing_version=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases | jq -r '.[] | select(.tag_name | test("alpha|beta|rc")) | .tag_name' | head -n 1 | sed 's/^v//')
+            singbox_testing_time=$(curl -sSL https://api.github.com/repos/SagerNet/sing-box/releases | jq -r '.[] | select(.tag_name | test("alpha|beta|rc")) | (.published_at // .created_at)' | head -n 1 | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')
+            if [[ -n "${singbox_testing_version}" && "${singbox_testing_version}" != "null" ]]; then
+              echo "singbox_testing_version=${singbox_testing_version}" >> ${GITHUB_OUTPUT}
+              echo "singbox_testing_time=${singbox_testing_time}" >> ${GITHUB_OUTPUT}
+              break
+            fi
+            echo "未获取到 sing-box Testing 版本号，将在 10 秒后重试..."
+            sleep 10
+          done
+
           echo "singbox_testing_linux_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale" >> ${GITHUB_OUTPUT}
           echo "singbox_testing_windows_tags=with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,with_wireguard,with_tailscale" >> ${GITHUB_OUTPUT}
 
@@ -348,6 +401,7 @@ jobs:
 
       fail-fast: false
     needs:
+      - go
       - singbox_testing_version
     env:
       GOOS: ${{ matrix.goos }}
@@ -369,7 +423,7 @@ jobs:
       - name: Setup `Go`
         uses: actions/setup-go@v6
         with:
-          go-version: ~1.25.10
+          go-version: ${{ needs.go.outputs.go_version }}
 
       - name: Build `sing-box Testing` core (Linux)
         if: ${{ matrix.goos == 'linux' }}
