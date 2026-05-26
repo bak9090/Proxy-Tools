@@ -17,6 +17,16 @@ permissions:
   contents: write
 
 jobs:
+  go:
+    runs-on: ubuntu-latest
+    outputs:
+      go_version: ${{ steps.go.outputs.version }}
+    steps:
+      - name: Get `Go` latest version
+        id: go
+        run: |
+          echo "version=$(curl -sSL https://raw.githubusercontent.com/actions/go-versions/update-versions-manifest-file/versions-manifest.json | jq -r '.[0].version')" >> ${GITHUB_OUTPUT}
+
   meta_version:
     runs-on: ubuntu-latest
     outputs:
@@ -29,8 +39,18 @@ jobs:
       - name: Get `mihomo Meta` version and time
         id: version
         run: |
-          echo "meta_version=$(curl -sSL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.tag_name' | sed 's/^v//')" >> ${GITHUB_OUTPUT}
-          echo "meta_time=$(curl -sSL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.published_at // .created_at' | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')" >> ${GITHUB_OUTPUT}
+          while true; do
+            meta_version=$(curl -sSL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+            meta_time=$(curl -sSL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.published_at // .created_at' | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')
+            if [[ -n "${meta_version}" && "${meta_version}" != "null" ]]; then
+              echo "meta_version=${meta_version}" >> ${GITHUB_OUTPUT}
+              echo "meta_time=${meta_time}" >> ${GITHUB_OUTPUT}
+              break
+            fi
+            echo "未成功获取到 mihomo Meta 版本号，将在 10 秒后重试..."
+            sleep 10
+          done
+
           echo "meta_linux_tags=no_tailscale" >> ${GITHUB_OUTPUT}
           echo "meta_windows_tags=with_gvisor" >> ${GITHUB_OUTPUT}
 
@@ -72,6 +92,7 @@ jobs:
 
       fail-fast: false
     needs:
+      - go
       - meta_version
     env:
       GOOS: ${{ matrix.goos }}
@@ -92,10 +113,9 @@ jobs:
           ref: Meta
 
       - name: Setup `Go`
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        uses: actions/setup-go@v6
         with:
-          go-download-base-url: 'https://github.com/MetaCubeX/go/releases/download/build'
-          go-version: '1.26'
+          go-version: ${{ needs.go.outputs.go_version }}
 
       - name: Update CA
         run: |
@@ -129,8 +149,18 @@ jobs:
       - name: Get `mihomo Alpha` version and time
         id: version
         run: |
-          echo "alpha_version=$(curl -sSL https://api.github.com/repos/MetaCubeX/mihomo/releases | jq -r '[.[] | select(.tag_name=="Prerelease-Alpha")][0].assets[].name' | perl -ne '/(alpha\-)([^.]+)/ && print "$1$2\n"' | head -n 1)" >> ${GITHUB_OUTPUT}
-          echo "alpha_time=$(curl -sSL https://api.github.com/repos/MetaCubeX/mihomo/releases | jq -r '[.[] | select(.tag_name=="Prerelease-Alpha")][0] | (.updated_at // .created_at)' | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')" >> ${GITHUB_OUTPUT}
+          while true; do
+            alpha_version=$(curl -sSL https://api.github.com/repos/MetaCubeX/mihomo/releases | jq -r '[.[] | select(.tag_name=="Prerelease-Alpha")][0].assets[].name' | perl -ne '/(alpha\-)([^.]+)/ && print "$1$2\n"' | head -n 1)
+            alpha_time=$(curl -sSL https://api.github.com/repos/MetaCubeX/mihomo/releases | jq -r '[.[] | select(.tag_name=="Prerelease-Alpha")][0] | (.updated_at // .created_at)' | xargs -I {} date -d '{} +8 hours' '+%Y-%m-%d')
+            if [[ -n "${alpha_version}" && "${alpha_version}" != "null" ]]; then
+              echo "alpha_version=${alpha_version}" >> ${GITHUB_OUTPUT}
+              echo "alpha_time=${alpha_time}" >> ${GITHUB_OUTPUT}
+              break
+            fi
+            echo "未成功获取到 mihomo Alpha 版本号，将在 10 秒后重试..."
+            sleep 10
+          done
+
           echo "alpha_linux_tags=no_tailscale" >> ${GITHUB_OUTPUT}
           echo "alpha_windows_tags=with_gvisor" >> ${GITHUB_OUTPUT}
 
@@ -172,6 +202,7 @@ jobs:
 
       fail-fast: false
     needs:
+      - go
       - alpha_version
     env:
       GOOS: ${{ matrix.goos }}
@@ -192,10 +223,9 @@ jobs:
           ref: Alpha
 
       - name: Setup `Go`
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        uses: actions/setup-go@v6
         with:
-          go-download-base-url: 'https://github.com/MetaCubeX/go/releases/download/build'
-          go-version: '1.26'
+          go-version: ${{ needs.go.outputs.go_version }}
 
       - name: Update CA
         run: |
